@@ -1,0 +1,476 @@
+---
+title: "Where NOT to go on your NYC Vacation"
+author: "M White"
+date: '2022-04-10'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Summary
+
+
+  New York City is a fabulous place to explore and it received over 60 million visitors before the pandemic.
+
+However, like other major cities of its size, it does have a problem with crime and can be unsafe.
+
+Using gun crime data provided by the **OpenNYC** initiative, we decided to explore the question:
+
+\
+
+  *"What are the safe areas to visit NYC and what are the areas to avoid."*
+\
+
+  In addition to answering this question using data analysis and visualizations, we also created 
+
+a **Safe Visit App** where a tourist can input certain parameters (Location, Time of Day etc)
+
+and receive a risk score that gauges the probability that the area is unsafe based on historic gun shooting data.
+
+
+## System Requirements
+
+### The following project requires these packages:
+
+- tidyverse
+- lubridate
+- png / jpeg - (Optional for background maps)
+- ggmap / ggpubr - (Optional if using Google maps)
+
+
+```{r packages, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(png)
+library(jpeg)
+library(ggpubr)
+library(ggmap)
+```
+
+## Data Input
+
+
+The data we are using to conduct our analysis comes from the OpenData initiative sponsored by the city of New York.
+
+https://opendata.cityofnewyork.us/
+
+This is a free data source published by New York City agencies and other partners.
+
+The specific data set that we are interested in is a public safety database called the
+
+**NYPD Shooting Incident Data (Historic)**
+
+It is a list of every shooting incident that occurred in NYC going back from November 22, 2021 (our last update) to 2006.
+
+Each entry represents a shooting incident in NYC and it is provided by the New York Police Department (NYPD)
+
+There are approximately 24,000 rows and 19 columns.  The fields include date and time of the shooting, location, NY Borough, 
+
+and information about the victim and the perpetrator (if known).
+
+Since our project is about tourist safety, We are primarily interested in location and time of shooting information.
+
+
+
+The download link is: 
+
+https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD
+
+
+A summary of the input data is below:
+
+
+```{r read_csv, echo=FALSE}
+
+data_link  <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+NYPD_input <- read.csv(data_link)
+summary(NYPD_input)
+
+```
+
+## Transform the Data
+
+
+Before we begin our analysis, we will need to transform and manipulate the input data.
+
+Specifically we will:
+
+- Convert OCCUR_DATE to a date
+- Convert OCCUR_TIME to a time
+- Convert BORO / PRECINCT and other strings to factors
+- Fix the VIC_AGE_GROUP description by creating a mapping function
+- Convert the homocide flag to a numeric (MFLAG)
+- Select certain columns while dropping others
+- Add hour / month / day of week fields to assist us with our reports
+
+A summary of the new transformed information is shown below:
+
+```{r transform, echo=FALSE}
+
+NYPD_input$OCCUR_DATE <- as_datetime(mdy(NYPD_input$OCCUR_DATE))
+NYPD_input$OCCUR_TIME <- as_datetime(hms(NYPD_input$OCCUR_TIME))
+NYPD_input$BORO       <- as_factor(NYPD_input$BORO)
+NYPD_input$PRECINCT   <- as_factor(NYPD_input$PRECINCT)
+NYPD_input$VIC_SEX    <- as_factor(NYPD_input$VIC_SEX)
+NYPD_input$VIC_RACE   <- as_factor(NYPD_input$VIC_RACE)
+
+fix_age<-function(x){if (x=="<18") "18" else if (x=="18-24") "24" else if (x=="25-44") "44" else if (x=="45-64") "64" else if (x=="65+") "65" else "0"}
+
+NYPD_input$VIC_AGE_GROUP   <- map_chr(NYPD_input$VIC_AGE_GROUP,fix_age)
+
+NYPD_input$MFLAG <- map_dbl(NYPD_input$STATISTICAL_MURDER_FLAG,function(.) if(.=="true") 1 else 0)
+
+NYPD_data <- NYPD_input               %>%
+select(c(2:5,8,12,17:18,20))          %>%
+mutate(NY_hour  = hour(OCCUR_TIME))   %>%
+mutate(NY_month = month(OCCUR_DATE))  %>%
+mutate(NY_DOW   = wday(OCCUR_DATE))
+
+summary(NYPD_data)
+
+
+```
+\newpage
+
+
+# Visualizations of Shootings by Time and Place
+
+## Count of Shootings by Borough
+
+With the transformed data, we are now going to conduct some data exploration to determine which areas are safe in NYC.
+
+We start by looking at all of the shootings to see where they occur.
+
+Brooklyn (#1) and the Bronx (#2) have the highest count.
+
+\
+\
+\
+
+
+```{r graph_incidents_by_boro, echo=FALSE}
+
+ggplot(NYPD_data,aes(BORO))+geom_bar()+
+labs(title='Count of Shootings by Borough')
+
+```
+\newpage
+
+## Shooting Counts based on Time of Day
+
+
+Next we will look in aggregate as to when these shooting are most likely to occur in terms of time of day
+
+
+No surprise, more shootings occur in the evening (after 18 to 24) and early in the morning (0 to 5)
+
+\
+\
+\
+
+
+```{r graph_incidents_by_time, echo=FALSE}
+
+ggplot(NYPD_data,aes(NY_hour))+geom_bar() + 
+labs(title='Count based on Time of Shooting (24hr clock)',x="Hour") +
+theme(plot.title=element_text(hjust=0),
+plot.subtitle=element_text(hjust=0),
+axis.ticks = element_blank(),
+legend.position="none") 
+
+```
+
+\newpage
+
+## Incidents based on Day of Week (Sun-Sat)
+
+\
+
+
+Does day of the week have an impact ?
+
+
+No surprise, more shootings occur on the weekends - Day is 1 (Sunday) or Day is 7 (Saturday)
+
+with fewer occurring during on a weekday
+
+\
+\
+\
+
+
+```{r graph_incidents_by_DOW, echo=FALSE}
+
+
+ggplot(NYPD_data,aes(NY_DOW))+geom_bar()    +                      # Sunday=1 / Sat=7
+labs(title='Incidents based on Day of Week (Sun-Sat)',x="Day of Week") +
+theme(plot.title=element_text(hjust=0),
+plot.subtitle=element_text(hjust=0),
+axis.ticks = element_blank(),
+legend.position="none") +
+scale_x_discrete(limits=c("Sun","Mon","Tue","Wed","Thu","Fri","Sat","Sun"))
+
+```
+
+\newpage
+
+## Incidents by Month of the Year
+
+\
+
+Finally, we will ask the question around seasonality.
+
+Do shooting incidents tend to happen more frequently during certain times of the year (Summer, Spring, Winter etc)
+
+Again, incidents seem to increase in the Summer months and this makes sense given people tend to be outside more frequently, not to mention hot weather can also lead to increasing anger between individuals.
+
+\
+\
+\
+
+```{r graph_incidents_by_month, echo=FALSE}
+
+ggplot(NYPD_data,aes(NY_month))+geom_bar() +
+labs(title='Incidents based on Month (Jan-Dec)',x="Month", y="Count") +     
+theme(plot.title=element_text(hjust=0),
+plot.subtitle=element_text(hjust=0),
+axis.ticks = element_blank(),
+#axis.text = element_blank(),
+axis.title = element_blank(),
+legend.position="none") +
+scale_x_discrete(limits=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")) + 
+scale_y_continuous(limits=c(0,3000))  
+
+```
+\newpage
+
+# A Tourist's Map of Where NOT to Go.
+
+Fortunately all of this data also has location information.
+
+With this we can provide a precise mapping of where incidents occurred.
+
+To highlight the data, we filtered for homicides only and then mapped exactly where 
+
+they occurred by borough.
+
+This created the following maps.
+
+We can clearly see the areas to avoid and the areas that are generally better e.g. midtown Manhattan
+
+This is a handy guide for visitors
+
+\
+\
+
+``` {r geo_plot_boro, echo=FALSE}
+
+
+# Method to use Google Maps if one has an API key
+
+#register_google(key="<INSERT API KEY>")
+#newyork.map_color <- get_map(location='New York City', maptype='roadmap', color='color',source='google',zoom=11)
+#newyork.map_color <- ggmap(get_googlemap(location='New York City', maptype='roadmap', color='color',source='google',zoom=11)
+#NYC <- ggmap(get_googlemap(center=c(lon = -74.0, lat = 40.7),zoom = 11, scale = 2,maptype ='roadmap',color = 'color'))         
+
+# Backup method based on loading a background image
+
+# Import the image for the boroughs
+
+img <- readPNG("./NYC01.png")
+
+NYPD_deaths <- NYPD_data %>%
+filter(NYPD_data$STATISTICAL_MURDER_FLAG == "true")
+
+ggplot()+
+background_image(img)+
+geom_point(data=NYPD_deaths, aes(x=Longitude, y=Latitude, color=STATISTICAL_MURDER_FLAG), size = 1, alpha=0.2)+
+facet_wrap(~BORO)+
+scale_color_manual(values=c("orange"))+
+#scale_color_manual(values=c("orange", "red"))+
+labs(title='Map of Fatalities by Borough',subtitle='')+
+theme(plot.title=element_text(hjust=0),
+plot.subtitle=element_text(hjust=0),
+axis.ticks = element_blank(),
+axis.text = element_blank(),
+axis.title = element_blank(),
+legend.position="none") 
+
+
+```
+\newpage
+
+# A Tourist's Map of Where NOT to Go.
+## Turn up the Heat
+
+In addition to the map by borough, we thought it would be interesting to conduct a density plot.
+
+This shows the specific hot-spots for gun-related violence in NYC and are a clear avoid.
+
+No surprise, they are largely centered around Brooklyn and the Bronx as confirmed by our other graphs.
+
+
+\
+\
+
+
+```{r NYC_heatmap, echo=FALSE}
+
+
+# Method to use Google Maps if one has an API key
+
+#register_google(key="<INSERT API KEY>")
+#newyork.map_color <- get_map(location='New York City', maptype='roadmap', color='color',source='google',zoom=11)
+#newyork.map_color <- ggmap(get_googlemap(location='New York City', maptype='roadmap', color='color',source='google',zoom=11)
+#NYC <- ggmap(get_googlemap(center=c(lon = -74.0, lat = 40.7),zoom = 11, scale = 2,maptype ='roadmap',color = 'color'))         
+
+# Backup method based on loading a background image
+
+# Import the image for the heatmap
+
+img <- readPNG("./NYC02.png")
+
+ggplot()+
+background_image(img)+
+stat_density2d(data=NYPD_data,aes(x=Longitude, y=Latitude, fill=..level.., alpha=..level..),geom='polygon') +
+scale_fill_gradient(low = "green", high = "red") +
+scale_alpha(range = c(0, 0.5), guide = FALSE) +
+labs(title='Heatmap',
+subtitle='The heatmap shows the hotspots for gun violence across New York City') +
+theme(axis.ticks = element_blank(),
+axis.text = element_blank(),
+axis.title = element_blank(),
+legend.position="none") 
+
+```
+\newpage
+
+# Our Safe Tourist App
+
+Leveraging the insight that we have gained through the data exploration and visualization stages, 
+
+we propose the creation of an app that keys in the informative features that determine whether a 
+
+zone in NYC city is safe and then reports a score.
+
+A tourist can input:
+
+- Latitude 
+- Longitude 
+- month 
+- day of week
+- hour 
+
+To create this model we opted for a Multivariate Logistic algorithm that accepts these inputs
+
+and correlates them back to whether a homicide is likely to occur under those circumstances
+
+The model is as follows:
+
+
+
+```{r Multivariate Logistic}
+
+model = glm(MFLAG ~ Latitude + Longitude + NY_hour + NY_month + NY_DOW,
+            data=NYPD_data,
+            family = binomial(link="logit")      )
+
+
+summary(model)
+
+```
+
+
+# Predictions
+
+While not comprehensive, we decided to test our application with a number of inputs.
+
+We first inputted a high crime zone under conditions that were conducive for an incident - Summer / Weekend etc.
+
+We then compared it to a known safer area - midtown Manhattan.
+
+Subsequently we made further adjustments to what should be a safer vacation area.
+
+The probability of an incident declined as we moved to safer locations, which was our expectations.
+
+
+
+
+```{r predict,echo=FALSE}
+
+tour_data = data.frame(Latitude=40.7,Longitude=-73.9,NY_hour=1,NY_month=7,NY_DOW=7)
+High_Crime_Peak_Time<-predict(model,tour_data,type="response")
+
+tour_data = data.frame(Latitude=40.7,Longitude=-73.9,NY_hour=15,NY_month=7,NY_DOW=7)
+High_Crime_Off_Peak<-predict(model,tour_data,type="response")
+
+tour_data = data.frame(Latitude=40.75,Longitude=-74.0,NY_hour=15,NY_month=7,NY_DOW=7)
+Manhattan_Off_Peak_Summer<-predict(model,tour_data,type="response")
+
+tour_data = data.frame(Latitude=40.75,Longitude=-74.0,NY_hour=15,NY_month=2,NY_DOW=7)
+Manhattan_Off_Peak_Winter<-predict(model,tour_data,type="response")
+
+
+```
+
+```{r prediction_results,echo=FALSE}
+
+cat(sprintf("High Crime Zone | Summer Weekend | Night | => Risk Score: %2.5f\n", High_Crime_Peak_Time))
+cat(sprintf("High Crime Zone | Summer Weekend | Day   | => Risk Score: %2.5f\n", High_Crime_Off_Peak))
+cat(sprintf("Manhattan       | Summer Weekend | Day   | => Risk Score: %2.5f\n", Manhattan_Off_Peak_Summer))
+cat(sprintf("Manhattan       | Winter Weekend | Day   | => Risk Score: %2.5f\n", Manhattan_Off_Peak_Winter))
+
+```
+
+\newpage 
+
+# Bias
+
+This data has a number of obvious biases that we note.
+
+\
+\
+
+## Temporal
+
+The data only goes back to 2006.  NYC has changed quite dramatically and was a different place prior to 2006.
+
+For example, midtown Manhattan went through and extensive clean up in post the 1980s.  It now screens as a relatively safe place but if the data went back far enough, 
+
+it would paint a different picture.  If we can point out this one temporal anomaly - how many others could exist.  
+
+Also, 2020 saw a spike in incidents given COVID so one may not be able to assume that data before 2019 is indicative of future crime trends.
+
+\
+\
+
+## Spacial
+
+The data only comes from NYPD sources.  Areas such as New Jersey are likely excluded.  So one cannot extrapolate trends based on Latitude and Longitude if data is missing.
+
+
+
+
+\newpage 
+
+# Conclusions
+
+
+The data and visualizations seemed to confirm what common sense has always said:
+
+- Don't go out late at night
+- Stick to areas with large crowds and high police presence
+- Hot weather makes tempers boil so be more cautious  
+
+
+
+
+
+
+
+
